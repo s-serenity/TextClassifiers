@@ -5,7 +5,7 @@ from peft import LoraConfig, PeftModel
 from trl import SFTTrainer
 import evaluate
 import torch
-from datasets import load_datasetf, Dataset
+from datasets import load_dataset, Dataset
 from transformers import (
     AutoModelForCausalLM,
     AutoModelForSequenceClassification,
@@ -50,7 +50,10 @@ class FinetuneTextClassifier(TextClassifier):
         self.tokenizer.pad_token = self.tokenizer.eos_token
         self.tokenizer.padding_side = "right"
         if finetune_way == "classifier":
-            self.model = AutoModelForSequenceClassification.from_pretrained(base_model_name,num_labels=2)
+            id2label = {0: categories[0], 1: categories[1]}
+            label2id = {categories[0]: 0, categories[1]: 1}
+            self.model = AutoModelForSequenceClassification.from_pretrained(base_model_name,num_labels=2,
+                                                                            id2label=id2label, label2id=label2id)
 
         if finetune_way == "llm-sft":
             self.bnb_config = BitsAndBytesConfig(
@@ -112,7 +115,7 @@ class FinetuneTextClassifier(TextClassifier):
             )
             trainer.train()
             trainer.save_model(save_name)
-            self.tokenizer.save_pretrained(save_name)
+            # self.tokenizer.save_pretrained(save_name)
         if self.finetune_way == "classifier":
             train_dataset = Dataset.from_pandas(train_data)
             val_dataset = Dataset.from_pandas(val_data)
@@ -121,29 +124,31 @@ class FinetuneTextClassifier(TextClassifier):
             tokenized_train_data = train_dataset.map(tokenize_function, batched=True)
             tokenized_val_data = val_dataset.map(tokenize_function, batched=True)
             training_args = TrainingArguments(
-                output_dir="trainer",
+                output_dir=save_name,
                 num_train_epochs=5,
                 per_device_train_batch_size = 16,
                 per_device_eval_batch_size = 16,
                 evaluation_strategy = "epoch",
                 logging_strategy = "epoch",
                 save_strategy = "epoch",
-                learning_rate = 0.001,
+                learning_rate =2e-5,
                 load_best_model_at_end = True,
                 metric_for_best_model = "auc",
                 optim = "adam"
             )
+            data_collator = DataCollatorWithPadding(tokenizer=self.tokenizer)
             trainer = Trainer(
                 model=self.model,
                 args=training_args,
                 train_dataset=tokenized_train_data,
                 eval_dataset=tokenized_val_data,
                 tokenizer=self.tokenizer,
+                data_collator=data_collator,
                 compute_metrics=compute_metrics
             )
             trainer.train()
             trainer.save_model(save_name)
-            self.tokenizer.save_pretrained(save_name)
+            # self.tokenizer.save_pretrained(save_name)
 
     def test(self,data,text_col_name):
         pipe = pipeline(task="text-generation",
